@@ -122,7 +122,8 @@ def video_msg(bot, update, user_data):
 
 # Function to receive other messages
 def other_msg(bot, update):
-    update.message.reply_text("Unknown message. /help")
+    if update.message:
+        update.message.reply_text("Unknown message. /help")
 
 # Function for handling choosen animation
 def inline_result(bot, update):

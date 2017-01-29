@@ -15,7 +15,10 @@ def words(text, minlen=3, maxlen=50):
     return [word for word in filter_by_size(result)]
 
 def stem_text(message):
-    lang = langdetect.detect(message)
+    try:
+        lang = langdetect.detect(message)
+    except:
+        lang = 'en'
     if lang not in algs:
         lang = 'en'
 

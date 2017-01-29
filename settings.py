@@ -3,25 +3,13 @@
 import logging
 from envparse import Env
 
-def log_level(level):
-    levels = {'DEBUG': logging.DEBUG,
-              'INFO': logging.INFO,
-              'WARNING': logging.WARNING,
-              'ERROR': logging.ERROR,
-              'CRITICAL': logging.CRITICAL}
-
-    if level not in levels.keys():
-        return logging.INFO
-    else:
-        return levels[level]
-
-
 env = Env(
     TELEGRAM_BOT_TOKEN=str,
     TELEGRAM_WEBHOOK_URL=str,
     TELEGRAM_WEBHOOK_URI=str,
     SERVER_WEBHOOK_PORT=dict(cast=int, default=8080),
-    LOG_LEVEL=dict(cast=log_level, default='INFO')
+    LOG_LEVEL=dict(cast=lambda l: getattr(logging, l.upper(), logging.INFO),
+        default='INFO')
 )
 env.read_envfile()
 
