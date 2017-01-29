@@ -27,13 +27,13 @@ class VideoFilter(BaseFilter):
 
 # Welcome message
 def start(bot, update):
-    msg = "Hello, {username}! Send me a gif with some description."
+    msg = u"Hello, {username}! Send me a gif with some description."
     update.message.reply_text(msg.format(
         username=update.message.from_user.first_name))
 
 # Error handling function
 def error(bot, update, error):
-    logger.warn('Update "%s" caused error "%s"' % (update, error))
+    logger.error('Update "{}" caused error "{}"'.format(update, error))
 
 # Function to receive animations
 def video_msg(bot, update):
@@ -55,6 +55,7 @@ def video_msg(bot, update):
         gif = Gif(file_id=file_id, owner=author_id)
         gif.save()
         GifIndex.add_item(gif, keywords)
+        logger.info(u"GIF added: '{}'".format(msg.caption))
         msg.reply_text("The GIF has been added. Thank you!")
 
     except ValueError as e:
@@ -83,7 +84,7 @@ def inline_query(bot, update):
     if update.inline_query.offset != '':
         offset = int(update.inline_query.offset)
 
-    logger.info("Inline query: '{}' (offset={})".format(query, offset))
+    logger.info(u"Inline query: '{}' (offset={})".format(query, offset))
 
     gifs = Gif.select().limit(limit).offset(offset)
 
