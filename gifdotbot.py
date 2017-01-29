@@ -9,6 +9,7 @@ from telegram.ext import (BaseFilter,
                           ChosenInlineResultHandler,
                           CommandHandler,
                           Dispatcher,
+                          Filters,
                           InlineQueryHandler,
                           MessageHandler,
                           Updater)
@@ -31,9 +32,18 @@ def start(bot, update):
     update.message.reply_text(msg.format(
         username=update.message.from_user.first_name))
 
+# Help message
+def help(bot, update):
+    msg = ("1. Type @gifdotbot in the message field in any chat, " +
+           "then type some keywords.\r\n" +
+           "2. Select any GIF to instantly send it to the chat.\r\n" +
+           "3. To upload your own GIF just send it to bot with description " +
+           "in caption.")
+    update.message.reply_text(msg)
+
 # Error handling function
 def error(bot, update, error):
-    logger.error('Update "{}" caused error "{}"'.format(update, error))
+    logger.error(u'Update "{}" caused error "{}"'.format(update, error))
 
 # Function to receive animations
 def video_msg(bot, update):
@@ -61,8 +71,12 @@ def video_msg(bot, update):
     except ValueError as e:
         msg.reply_text(str(e))
     except Exception as e:
-        msg.reply_text("An error has occurred.")
         logger.error(str(e))
+        msg.reply_text("An error has occurred.")
+
+# Function to receive other messages
+def other_msg(bot, update):
+    update.message.reply_text("Unknown message. /help")
 
 # Function for handling choosen animation
 def inline_result(bot, update):
@@ -109,25 +123,32 @@ def inline_query(bot, update):
 
     update.inline_query.answer(results, **opts)
 
-def main():
-    bot = Bot(BOT_TOKEN)
-    dp = Dispatcher(bot, None, 0)
-    update_queue = Queue()
-
+def set_handlers(dp):
     dp.add_handler(CommandHandler('start', start))
+    dp.add_handler(CommandHandler('help', help))
     dp.add_handler(MessageHandler(VideoFilter(), video_msg, allow_edited=True))
     dp.add_handler(ChosenInlineResultHandler(inline_result))
     dp.add_handler(InlineQueryHandler(inline_query))
+    dp.add_handler(MessageHandler(Filters.all, other_msg))
     dp.add_error_handler(error)
+
+def main():
+    bot = Bot(BOT_TOKEN)
+    dp = Dispatcher(bot, None, 0)
+    set_handlers(dp)
+    update_queue = Queue()
 
     httpd = WebhookServer(('127.0.0.1', WEBHOOK_PORT),
         WebhookHandler, update_queue, WEBHOOK_URI, bot)
 
     while True:
-        httpd.handle_request()
-        if not update_queue.empty():
-            update = update_queue.get()
-            dp.process_update(update)
+        try:
+            httpd.handle_request()
+            if not update_queue.empty():
+                update = update_queue.get()
+                dp.process_update(update)
+        except KeyboardInterrupt:
+            exit(0)
 
 if __name__ == "__main__":
     main()
