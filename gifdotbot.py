@@ -8,6 +8,7 @@ from telegram.utils.webhookhandler import WebhookHandler, WebhookServer
 from telegram.ext import (BaseFilter,
                           ChosenInlineResultHandler,
                           CommandHandler,
+                          ConversationHandler,
                           Dispatcher,
                           Filters,
                           InlineQueryHandler,
@@ -18,6 +19,8 @@ from settings import *
 from models import Gif, GifIndex
 import stemmer
 
+CAPTION = 1
+
 # Custom filter for GIFs
 class VideoFilter(BaseFilter):
 
@@ -25,6 +28,20 @@ class VideoFilter(BaseFilter):
         return (bool(message.document) and
             ((message.document.mime_type == "video/mp4") or
              (message.document.mime_type == "image/gif")))
+
+# Check for GIF is exist
+def gif_exists(file_id):
+    try:
+        gif = Gif.select().where(Gif.file_id == file_id).get()
+        return True
+    except Gif.DoesNotExist:
+        return False
+
+# Add GIF to DB
+def add_gif(file_id, owner_id, desc):
+    gif = Gif(file_id=file_id, owner=owner_id)
+    gif.save()
+    GifIndex.add_item(gif, stemmer.stem_text(desc))
 
 # Welcome message
 def start(bot, update):
@@ -45,34 +62,63 @@ def help(bot, update):
 def error(bot, update, error):
     logger.error(u'Update "{}" caused error "{}"'.format(update, error))
 
-# Function to receive animations
-def video_msg(bot, update):
+# Cancel upload
+def cancel(bot, update):
+    update.message.reply_text('Upload canceled. /help')
+    return ConversationHandler.END
+
+# Function to handle GIF description
+def caption_msg(bot, update, user_data):
+    msg = update.message
+    author_id = int(update.message.from_user.id)
+
+    if msg.text == '':
+        msg.reply_text("Please, type some description. /cancel")
+        return CAPTION
+    elif stemmer.stem_text(msg.text) == '':
+        msg.reply_text("Description is too short. Try again. /cancel")
+        return CAPTION
+
+    if gif_exists(user_data['file_id']):
+        msg.reply_text('The GIF is already exist.')
+        return ConversationHandler.END
+
     try:
-        msg = update.message or update.edited_message
-        if not msg.caption:
-            raise ValueError('You forgot caption. Try edit your GIF.')
-
-        file_id = msg.document.file_id
-        author_id = int(msg.from_user.id)
-
-        try:
-            gif = Gif.select().where(Gif.file_id == file_id).get()
-            raise ValueError('The GIF is already exist.')
-        except Gif.DoesNotExist:
-            pass
-
-        keywords = stemmer.stem_text(msg.caption)
-        gif = Gif(file_id=file_id, owner=author_id)
-        gif.save()
-        GifIndex.add_item(gif, keywords)
-        logger.info(u"GIF added: '{}'".format(msg.caption))
+        add_gif(user_data['file_id'], author_id, msg.text)
         msg.reply_text("The GIF has been added. Thank you!")
-
     except ValueError as e:
         msg.reply_text(str(e))
     except Exception as e:
-        logger.error(str(e))
         msg.reply_text("An error has occurred.")
+        logger.error(str(e))
+    finally:
+        return ConversationHandler.END
+
+# Function to receive GIFs
+def video_msg(bot, update, user_data):
+    msg = update.message
+    file_id = msg.document.file_id
+    author_id = int(msg.from_user.id)
+
+    if gif_exists(file_id):
+        msg.reply_text('The GIF is already exist.')
+        return ConversationHandler.END
+
+    if not msg.caption:
+        user_data['file_id'] = file_id
+        msg.reply_text("Now type some description. /cancel")
+        return CAPTION
+
+    try:
+        add_gif(file_id, author_id, msg.caption)
+        msg.reply_text("The GIF has been added. Thank you!")
+    except ValueError as e:
+        msg.reply_text(str(e))
+    except Exception as e:
+        msg.reply_text("An error has occurred.")
+        logger.error(str(e))
+    finally:
+        return ConversationHandler.END
 
 # Function to receive other messages
 def other_msg(bot, update):
@@ -124,9 +170,19 @@ def inline_query(bot, update):
     update.inline_query.answer(results, **opts)
 
 def set_handlers(dp):
+    add_handler = ConversationHandler(
+        entry_points=[MessageHandler(VideoFilter(), video_msg,
+            pass_user_data=True)],
+        states={
+            CAPTION: [MessageHandler(Filters.text, caption_msg,
+                pass_user_data=True)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+
+    dp.add_handler(add_handler)
     dp.add_handler(CommandHandler('start', start))
     dp.add_handler(CommandHandler('help', help))
-    dp.add_handler(MessageHandler(VideoFilter(), video_msg, allow_edited=True))
     dp.add_handler(ChosenInlineResultHandler(inline_result))
     dp.add_handler(InlineQueryHandler(inline_query))
     dp.add_handler(MessageHandler(Filters.all, other_msg))
