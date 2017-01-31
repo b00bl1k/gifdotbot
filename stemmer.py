@@ -1,4 +1,5 @@
-import langdetect
+# -*- coding: utf-8 -*-
+
 import Stemmer
 
 algs = {
@@ -6,20 +7,22 @@ algs = {
     'en': Stemmer.Stemmer('english'),
 }
 
-def words(text, minlen=3, maxlen=50):
-    def filter_by_size(words):
-        for word in words:
-            if len(word) >= minlen and len(word) <= maxlen: yield word
+def is_russian(word):
+    for c in word:
+        if u"\u0410" <= c <= u"\u044f":
+            return True
+    return False
 
-    result = ''.join((c if c.isalnum() else ' ') for c in text).split()
-    return [word for word in filter_by_size(result)]
+def stem_text(message, minlen=1, maxlen=50):
+    result = ''.join((c if c.isalnum() else ' ') for c in message).split()
+    text = []
+    for word in result:
+        if minlen <= len(word) <= maxlen:
+            if is_russian(word):
+                lang = 'ru'
+            else:
+                lang = 'en'
 
-def stem_text(message):
-    try:
-        lang = langdetect.detect(message)
-    except:
-        lang = 'en'
-    if lang not in algs:
-        lang = 'en'
+            text.append(algs[lang].stemWord(word))
 
-    return " ".join(algs[lang].stemWords(words(message)))
+    return " ".join(text)
