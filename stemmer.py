@@ -19,10 +19,10 @@ def stem_text(message, minlen=1, maxlen=50):
     for word in result:
         if minlen <= len(word) <= maxlen:
             if is_russian(word):
-                lang = 'ru'
+                alg = algs['ru']
             else:
-                lang = 'en'
+                alg = algs['en']
 
-            text.append(algs[lang].stemWord(word))
+            text.append(alg.stemWord(word.lower()))
 
     return " ".join(text)

@@ -3,7 +3,7 @@
 
 from queue import Queue
 
-from telegram import Bot, InlineQueryResultCachedGif
+from telegram import Bot, InlineQueryResultCachedGif, ParseMode
 from telegram.utils.webhookhandler import WebhookHandler, WebhookServer
 from telegram.ext import (BaseFilter,
                           ChosenInlineResultHandler,
@@ -45,18 +45,20 @@ def add_gif(file_id, owner_id, desc):
 
 # Welcome message
 def start(bot, update):
-    msg = u"Hello, {username}! Send me a gif with some description."
+    msg = u"Hello, {username}! Send me a GIF with some description."
     update.message.reply_text(msg.format(
         username=update.message.from_user.first_name))
 
 # Help message
 def help(bot, update):
-    msg = ("1. Type @gifdotbot in the message field in any chat, " +
-           "then type some keywords.\r\n" +
-           "2. Select any GIF to instantly send it to the chat.\r\n" +
-           "3. To upload your own GIF just send it to bot with description " +
-           "in caption.")
-    update.message.reply_text(msg)
+    text = ("This bot can help you find and share GIFs. It works automatically,"
+        " no need to add it anywhere. Simply open any of your chats and type "
+        "`@gifdotbot something` in the message field. Then tap on a result to "
+        "send.\n\n"
+        "If you want to upload your own GIF, just send it to bot and enter text"
+        " description.")
+
+    update.message.reply_text(text, parse_mode = ParseMode.MARKDOWN)
 
 # Error handling function
 def error(bot, update, error):
@@ -73,7 +75,7 @@ def caption_msg(bot, update, user_data):
     author_id = int(update.message.from_user.id)
 
     if msg.text == '':
-        msg.reply_text("Please, type some description. /cancel")
+        msg.reply_text("Please, enter text description. /cancel")
         return CAPTION
     elif stemmer.stem_text(msg.text) == '':
         msg.reply_text("Description is too short. Try again. /cancel")
@@ -85,7 +87,7 @@ def caption_msg(bot, update, user_data):
 
     try:
         add_gif(user_data['file_id'], author_id, msg.text)
-        msg.reply_text("The GIF has been added. Thank you!")
+        msg.reply_text("The GIF was added. Thank you!")
     except ValueError as e:
         msg.reply_text(str(e))
     except Exception as e:
@@ -106,12 +108,12 @@ def video_msg(bot, update, user_data):
 
     if not msg.caption:
         user_data['file_id'] = file_id
-        msg.reply_text("Now type some description. /cancel")
+        msg.reply_text("Please, enter text description. /cancel")
         return CAPTION
 
     try:
         add_gif(file_id, author_id, msg.caption)
-        msg.reply_text("The GIF has been added. Thank you!")
+        msg.reply_text("The GIF was added. Thank you!")
     except ValueError as e:
         msg.reply_text(str(e))
     except Exception as e:
@@ -123,7 +125,15 @@ def video_msg(bot, update, user_data):
 # Function to receive other messages
 def other_msg(bot, update):
     if update.message:
-        update.message.reply_text("Unknown message. /help")
+        if update.message.text:
+            if update.message.text.startswith('/'):
+                text = "Unknown command. /help"
+            else:
+                text = "This is inline bot. /help"
+        else:
+            text = "Unsupported message type. /help"
+        update.message.reply_text(text)
+
 
 # Function for handling choosen animation
 def inline_result(bot, update):
@@ -168,6 +178,7 @@ def inline_query(bot, update):
         if len(results) == limit:
             opts['next_offset'] = offset + limit
 
+    print results
     update.inline_query.answer(results, **opts)
 
 def set_handlers(dp):
