@@ -1,0 +1,4 @@
+#!/bin/bash -e
+
+source $BOT_HOME/venv/bin/activate
+python $BOT_HOME/gifdotbot.py

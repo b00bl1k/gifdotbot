@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from queue import Queue
-
+import logging
+import os
+from datetime import datetime
+from envparse import Env
+from algoliasearch import algoliasearch
 from telegram import Bot, InlineQueryResultCachedGif, ParseMode
-from telegram.utils.webhookhandler import WebhookHandler, WebhookServer
 from telegram.ext import (BaseFilter,
                           ChosenInlineResultHandler,
                           CommandHandler,
@@ -15,13 +17,32 @@ from telegram.ext import (BaseFilter,
                           MessageHandler,
                           Updater)
 
-from settings import *
-from models import Gif, GifIndex
-import stemmer
+# Configuration
+env = Env(
+    BOT_TOKEN=str,
+    ALGOLIA_API_KEY=str,
+    ALGOLIA_APP_ID=str,
+    ALGOLIA_INDEX_NAME=str,
+    LOG_LEVEL=dict(cast=lambda l: getattr(logging, l.upper(), logging.INFO),
+        default='INFO')
+)
+env.read_envfile()
 
-CAPTION = 1
+BOT_TOKEN = env('BOT_TOKEN')
+ALGOLIA_APP_ID = env('ALGOLIA_APP_ID')
+ALGOLIA_API_KEY = env('ALGOLIA_API_KEY')
+ALGOLIA_INDEX_NAME = env('ALGOLIA_INDEX_NAME')
 
-# Custom filter for GIFs
+# Setup logging
+logfile = os.path.abspath('gifdotbot.log')
+logging.basicConfig(level=env('LOG_LEVEL'), filename=logfile,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt = '%d-%m-%Y %H:%M:%S')
+logger = logging.getLogger(__name__)
+
+# Conversation state
+CAPTION=1
+
 class VideoFilter(BaseFilter):
 
     def filter(self, message):
@@ -29,101 +50,106 @@ class VideoFilter(BaseFilter):
             ((message.document.mime_type == "video/mp4") or
              (message.document.mime_type == "image/gif")))
 
-# Check for GIF is exist
-def gif_exists(file_id):
-    try:
-        gif = Gif.select().where(Gif.file_id == file_id).get()
-        return True
-    except Gif.DoesNotExist:
-        return False
-
-# Add GIF to DB
-def add_gif(file_id, owner_id, desc):
-    gif = Gif(file_id=file_id, owner=owner_id)
-    gif.save()
-    GifIndex.add_item(gif, stemmer.stem_text(desc))
-
-# Welcome message
 def start(bot, update):
     msg = u"Hello, {username}! Send me a GIF with some description."
     update.message.reply_text(msg.format(
         username=update.message.from_user.first_name))
 
-# Help message
 def help(bot, update):
     text = ("This bot can help you find and share GIFs. It works automatically,"
         " no need to add it anywhere. Simply open any of your chats and type "
         "`@gifdotbot something` in the message field. Then tap on a result to "
-        "send.\n\n"
-        "If you want to upload your own GIF, just send it to bot and enter text"
-        " description.")
+        "send.\n\n If you want to upload your own GIF, just send it to bot and "
+        "enter text description.")
 
     update.message.reply_text(text, parse_mode = ParseMode.MARKDOWN)
 
-# Error handling function
 def error(bot, update, error):
-    logger.error(u'Update "{}" caused error "{}"'.format(update, error))
+    logger.exception(error)
 
-# Cancel upload
-def cancel(bot, update):
+def on_video(bot, update, user_data):
+    keywords = update.message.caption
+    file_id = update.message.document.file_id
+    author_id = int(update.message.from_user.id)
+    user_data['file_id'] = file_id
+
+    if not keywords:
+        update.message.reply_text("Please, enter text description. /cancel")
+        return CAPTION
+
+    bot.index.add_objects([{
+        "keywords": keywords,
+        "file_id": file_id,
+        "created": datetime.now(),
+        "owner": author_id,
+        "rank": 0
+    }])
+
+    update.message.reply_text("The GIF was added. Thank you!")
+
+    return ConversationHandler.END
+
+def on_video_caption(bot, update, user_data):
+    keywords = update.message.text
+    file_id = user_data['file_id']
+    author_id = int(update.message.from_user.id)
+
+    if not keywords:
+        update.message.reply_text("Please, enter text description. /cancel")
+        return CAPTION
+
+    bot.index.add_objects([{
+        "keywords": keywords,
+        "file_id": file_id,
+        "created": datetime.now(),
+        "owner": author_id,
+        "rank": 0
+    }])
+
+    update.message.reply_text("The GIF was added. Thank you!")
+
+    return ConversationHandler.END
+
+def on_video_cancel(bot, update):
     update.message.reply_text('Upload canceled. /help')
     return ConversationHandler.END
 
-# Function to handle GIF description
-def caption_msg(bot, update, user_data):
-    msg = update.message
-    author_id = int(update.message.from_user.id)
+def inline_search(bot, update):
+    page = 0
+    results = list()
+    opts = {}
 
-    if msg.text == '':
-        msg.reply_text("Please, enter text description. /cancel")
-        return CAPTION
-    elif stemmer.stem_text(msg.text) == '':
-        msg.reply_text("Description is too short. Try again. /cancel")
-        return CAPTION
+    query = update.inline_query.query
 
-    if gif_exists(user_data['file_id']):
-        msg.reply_text('The GIF is already exist.')
-        return ConversationHandler.END
+    if update.inline_query.offset != '':
+        page = int(update.inline_query.offset)
 
-    try:
-        add_gif(user_data['file_id'], author_id, msg.text)
-        msg.reply_text("The GIF was added. Thank you!")
-    except ValueError as e:
-        msg.reply_text(str(e))
-    except Exception as e:
-        msg.reply_text("An error has occurred.")
-        logger.error(str(e))
-    finally:
-        return ConversationHandler.END
+    logger.info(u"Inline query: '{}' (page={})".format(query, page))
 
-# Function to receive GIFs
-def video_msg(bot, update, user_data):
-    msg = update.message
-    file_id = msg.document.file_id
-    author_id = int(msg.from_user.id)
+    res = bot.index.search(query, {
+        "hitsPerPage": 10,
+        "page": page,
+    })
 
-    if gif_exists(file_id):
-        msg.reply_text('The GIF is already exist.')
-        return ConversationHandler.END
+    for hit in res["hits"]:
+        results.append(InlineQueryResultCachedGif(
+            id=hit["objectID"], gif_file_id=hit["file_id"]))
 
-    if not msg.caption:
-        user_data['file_id'] = file_id
-        msg.reply_text("Please, enter text description. /cancel")
-        return CAPTION
+    next_page = page + 1
+    if next_page < res["nbPages"]:
+        opts['next_offset'] = str(next_page)
 
-    try:
-        add_gif(file_id, author_id, msg.caption)
-        msg.reply_text("The GIF was added. Thank you!")
-    except ValueError as e:
-        msg.reply_text(str(e))
-    except Exception as e:
-        msg.reply_text("An error has occurred.")
-        logger.error(str(e))
-    finally:
-        return ConversationHandler.END
+    update.inline_query.answer(results, **opts)
 
-# Function to receive other messages
-def other_msg(bot, update):
+def inline_result(bot, update):
+    obj_id = update.chosen_inline_result.result_id
+    logger.info("Gif with object_id={} choosen".format(obj_id))
+    bot.index.partial_update_object({
+        "rank": {"value": 1, "_operation": "Increment"},
+        "objectID": obj_id
+    })
+
+def unknown_message(bot, update):
     if update.message:
         if update.message.text:
             if update.message.text.startswith('/'):
@@ -134,89 +160,41 @@ def other_msg(bot, update):
             text = "Unsupported message type. /help"
         update.message.reply_text(text)
 
-
-# Function for handling choosen animation
-def inline_result(bot, update):
-    gifid = int(update.chosen_inline_result.result_id)
-    logger.info("Gif with id={} choosen".format(gifid))
-    query = (Gif
-             .update(rank=Gif.rank + 1)
-             .where(Gif.id == gifid))
-    query.execute()
-
-# Inline query handling
-def inline_query(bot, update):
-    limit = 10
-    offset = 0
-    results = list()
-
-    query = update.inline_query.query
-
-    if update.inline_query.offset != '':
-        offset = int(update.inline_query.offset)
-
-    logger.info(u"Inline query: '{}' (offset={})".format(query, offset))
-
-    gifs = Gif.select().limit(limit).offset(offset)
-
-    if query:
-        terms = stemmer.stem_text(query)
-        gifs = (gifs.join(
-                    GifIndex,
-                    on=(Gif.id == GifIndex.docid))
-                .where(GifIndex.match(terms))
-                .order_by(GifIndex.bm25()))
-    else:
-        gifs = gifs.order_by(Gif.rank.desc())
-
-    for gif in gifs:
-        results.append(InlineQueryResultCachedGif(
-            id=str(gif.id), gif_file_id=gif.file_id))
-
-    opts = {}
-    if results:
-        if len(results) == limit:
-            opts['next_offset'] = offset + limit
-
-    print results
-    update.inline_query.answer(results, **opts)
-
-def set_handlers(dp):
-    add_handler = ConversationHandler(
-        entry_points=[MessageHandler(VideoFilter(), video_msg,
-            pass_user_data=True)],
-        states={
-            CAPTION: [MessageHandler(Filters.text, caption_msg,
-                pass_user_data=True)]
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-
-    dp.add_handler(add_handler)
-    dp.add_handler(CommandHandler('start', start))
-    dp.add_handler(CommandHandler('help', help))
-    dp.add_handler(ChosenInlineResultHandler(inline_result))
-    dp.add_handler(InlineQueryHandler(inline_query))
-    dp.add_handler(MessageHandler(Filters.all, other_msg))
-    dp.add_error_handler(error)
+add_gif_conversation = ConversationHandler(
+    entry_points=[MessageHandler(VideoFilter(), on_video,
+        pass_user_data=True)],
+    states={
+        CAPTION: [MessageHandler(Filters.text, on_video_caption,
+            pass_user_data=True)]
+    },
+    fallbacks=[CommandHandler('cancel', on_video_cancel)]
+)
 
 def main():
-    bot = Bot(BOT_TOKEN)
-    dp = Dispatcher(bot, None, 0)
-    set_handlers(dp)
-    update_queue = Queue()
+    # initialize algolia client
+    client = algoliasearch.Client(ALGOLIA_APP_ID, ALGOLIA_API_KEY)
+    index = client.init_index(ALGOLIA_INDEX_NAME)
+    index.set_settings({
+        "searchableAttributes": ["keywords", "file_id"],
+        'customRanking': ['desc(rank)'],
+        "typoTolerance": True,
+        "disableTypoToleranceOnAttributes": ["file_id"],
+        "ignorePlurals": True
+    })
 
-    httpd = WebhookServer(('127.0.0.1', WEBHOOK_PORT),
-        WebhookHandler, update_queue, WEBHOOK_URI, bot)
-
-    while True:
-        try:
-            httpd.handle_request()
-            if not update_queue.empty():
-                update = update_queue.get()
-                dp.process_update(update)
-        except KeyboardInterrupt:
-            exit(0)
+    # initialize bot
+    upd = Updater(token=BOT_TOKEN)
+    upd.bot.index = index
+    dp = upd.dispatcher
+    dp.add_handler(add_gif_conversation)
+    dp.add_handler(CommandHandler('help', help))
+    dp.add_handler(CommandHandler('start', start))
+    dp.add_handler(InlineQueryHandler(inline_search))
+    dp.add_handler(ChosenInlineResultHandler(inline_result))
+    dp.add_handler(MessageHandler(Filters.all, unknown_message))
+    dp.add_error_handler(error)
+    upd.start_polling(timeout=30)
+    upd.idle()
 
 if __name__ == "__main__":
     main()
