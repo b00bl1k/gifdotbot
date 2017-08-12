@@ -34,8 +34,7 @@ ALGOLIA_API_KEY = env('ALGOLIA_API_KEY')
 ALGOLIA_INDEX_NAME = env('ALGOLIA_INDEX_NAME')
 
 # Setup logging
-logfile = os.path.abspath('gifdotbot.log')
-logging.basicConfig(level=env('LOG_LEVEL'), filename=logfile,
+logging.basicConfig(level=env('LOG_LEVEL'),
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt = '%d-%m-%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
