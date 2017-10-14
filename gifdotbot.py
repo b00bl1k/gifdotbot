@@ -23,6 +23,7 @@ env = Env(
     ALGOLIA_API_KEY=str,
     ALGOLIA_APP_ID=str,
     ALGOLIA_INDEX_NAME=str,
+    MODERATOR_ID=dict(cast=str, default=''),
     LOG_LEVEL=dict(cast=lambda l: getattr(logging, l.upper(), logging.INFO),
         default='INFO')
 )
@@ -32,6 +33,7 @@ BOT_TOKEN = env('BOT_TOKEN')
 ALGOLIA_APP_ID = env('ALGOLIA_APP_ID')
 ALGOLIA_API_KEY = env('ALGOLIA_API_KEY')
 ALGOLIA_INDEX_NAME = env('ALGOLIA_INDEX_NAME')
+MODERATOR_ID = env('MODERATOR_ID')
 
 # Setup logging
 logging.basicConfig(level=env('LOG_LEVEL'),
@@ -41,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Conversation state
 CAPTION=1
+SELECTION=2
 
 class VideoFilter(BaseFilter):
 
@@ -101,16 +104,34 @@ def on_video_caption(bot, update, user_data):
         "keywords": keywords,
         "file_id": file_id,
         "created": datetime.now(),
-        "owner": author_id,
-        "rank": 0
+        "owner": author_id
     }])
 
     update.message.reply_text("The GIF was added. Thank you!")
 
     return ConversationHandler.END
 
-def on_video_cancel(bot, update):
-    update.message.reply_text('Upload canceled. /help')
+def remove_start(bot, update):
+    author_id = int(update.message.from_user.id)
+    if MODERATOR_ID != "" and author_id == int(MODERATOR_ID):
+        update.message.reply_text('Please choose gif. /help')
+        return SELECTION
+
+    logger.warning("Remove attempt id={}".format(author_id))
+    update.message.reply_text('You don\'t have permission to access this area. /help')
+    return ConversationHandler.END
+
+def remove_select(bot, update):
+    file_id = update.message.document.file_id.strip()
+    if file_id != "":
+        bot.index.delete_by_query(file_id)
+        update.message.reply_text('Success. Select next one or /cancel')
+    else:
+        update.message.reply_text('Try again or /cancel')
+    return SELECTION
+
+def cancel(bot, update):
+    update.message.reply_text('Action canceled. /help')
     return ConversationHandler.END
 
 def inline_search(bot, update):
@@ -143,10 +164,6 @@ def inline_search(bot, update):
 def inline_result(bot, update):
     obj_id = update.chosen_inline_result.result_id
     logger.info("Gif with object_id={} choosen".format(obj_id))
-    bot.index.partial_update_object({
-        "rank": {"value": 1, "_operation": "Increment"},
-        "objectID": obj_id
-    })
 
 def unknown_message(bot, update):
     if update.message:
@@ -166,7 +183,15 @@ add_gif_conversation = ConversationHandler(
         CAPTION: [MessageHandler(Filters.text, on_video_caption,
             pass_user_data=True)]
     },
-    fallbacks=[CommandHandler('cancel', on_video_cancel)]
+    fallbacks=[CommandHandler('cancel', cancel)]
+)
+
+remove_gif_conversation = ConversationHandler(
+    entry_points=[CommandHandler('remove', remove_start)],
+    states={
+        SELECTION: [MessageHandler(VideoFilter(), remove_select)]
+    },
+    fallbacks=[CommandHandler('cancel', cancel)]
 )
 
 def main():
@@ -175,7 +200,7 @@ def main():
     index = client.init_index(ALGOLIA_INDEX_NAME)
     index.set_settings({
         "searchableAttributes": ["keywords", "file_id"],
-        'customRanking': ['desc(rank)'],
+        'customRanking': ['asc(created)'], # fresh on top
         "typoTolerance": True,
         "disableTypoToleranceOnAttributes": ["file_id"],
         "ignorePlurals": True
@@ -185,6 +210,7 @@ def main():
     upd = Updater(token=BOT_TOKEN)
     upd.bot.index = index
     dp = upd.dispatcher
+    dp.add_handler(remove_gif_conversation)
     dp.add_handler(add_gif_conversation)
     dp.add_handler(CommandHandler('help', help))
     dp.add_handler(CommandHandler('start', start))
