@@ -25,7 +25,12 @@ env = Env(
     ALGOLIA_INDEX_NAME=str,
     MODERATOR_ID=dict(cast=str, default=''),
     LOG_LEVEL=dict(cast=lambda l: getattr(logging, l.upper(), logging.INFO),
-        default='INFO')
+        default='INFO'),
+    WEBHOOK=bool,
+    WEBHOOK_HOST=str,
+    WEBHOOK_PORT=int,
+    WEBHOOK_PATH=str,
+    WEBHOOK_URL=str
 )
 env.read_envfile()
 
@@ -34,6 +39,11 @@ ALGOLIA_APP_ID = env('ALGOLIA_APP_ID')
 ALGOLIA_API_KEY = env('ALGOLIA_API_KEY')
 ALGOLIA_INDEX_NAME = env('ALGOLIA_INDEX_NAME')
 MODERATOR_ID = env('MODERATOR_ID')
+WEBHOOK = env('WEBHOOK')
+WEBHOOK_HOST = env('WEBHOOK_HOST')
+WEBHOOK_PORT = env('WEBHOOK_PORT')
+WEBHOOK_PATH = env('WEBHOOK_PATH')
+WEBHOOK_URL = env('WEBHOOK_URL')
 
 # Setup logging
 logging.basicConfig(level=env('LOG_LEVEL'),
@@ -218,7 +228,14 @@ def main():
     dp.add_handler(ChosenInlineResultHandler(inline_result))
     dp.add_handler(MessageHandler(Filters.all, unknown_message))
     dp.add_error_handler(error)
-    upd.start_polling(timeout=30)
+
+    if WEBHOOK:
+        upd.start_webhook(listen=WEBHOOK_HOST, port=WEBHOOK_PORT,
+            url_path=WEBHOOK_PATH)
+        upd.bot.set_webhook(WEBHOOK_URL)
+    else:
+        upd.bot.set_webhook() # remove webhook
+        upd.start_polling(timeout=30)
     upd.idle()
 
 if __name__ == "__main__":
