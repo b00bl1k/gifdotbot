@@ -3,6 +3,7 @@
 
 import logging
 import os
+from botanio import botan
 from datetime import datetime
 from envparse import Env
 from algoliasearch import algoliasearch
@@ -30,7 +31,8 @@ env = Env(
     WEBHOOK_HOST=str,
     WEBHOOK_PORT=int,
     WEBHOOK_PATH=str,
-    WEBHOOK_URL=str
+    WEBHOOK_URL=str,
+    BOTAN_TOKEN=str
 )
 env.read_envfile()
 
@@ -44,6 +46,7 @@ WEBHOOK_HOST = env('WEBHOOK_HOST')
 WEBHOOK_PORT = env('WEBHOOK_PORT')
 WEBHOOK_PATH = env('WEBHOOK_PATH')
 WEBHOOK_URL = env('WEBHOOK_URL')
+BOTAN_TOKEN = env('BOTAN_TOKEN')
 
 # Setup logging
 logging.basicConfig(level=env('LOG_LEVEL'),
@@ -62,10 +65,17 @@ class VideoFilter(BaseFilter):
             ((message.document.mime_type == "video/mp4") or
              (message.document.mime_type == "image/gif")))
 
+def track(uid, event, data):
+    if BOTAN_TOKEN:
+        if isinstance(data, dict) == False:
+            data = data.to_dict()
+        botan.track(BOTAN_TOKEN, uid, data, event)
+
 def start(bot, update):
     msg = u"Hello, {username}! Send me a GIF with some description."
     update.message.reply_text(msg.format(
         username=update.message.from_user.first_name))
+    track(update.message.from_user.id, "start", update.message)
 
 def help(bot, update):
     text = ("This bot can help you find and share GIFs. It works automatically,"
@@ -75,6 +85,7 @@ def help(bot, update):
         "enter text description.")
 
     update.message.reply_text(text, parse_mode = ParseMode.MARKDOWN)
+    track(update.message.from_user.id, "help", update.message)
 
 def error(bot, update, error):
     logger.exception(error)
@@ -98,6 +109,7 @@ def on_video(bot, update, user_data):
     }])
 
     update.message.reply_text("The GIF was added. Thank you!")
+    track(update.message.from_user.id, "add", update.message)
 
     return ConversationHandler.END
 
@@ -118,6 +130,7 @@ def on_video_caption(bot, update, user_data):
     }])
 
     update.message.reply_text("The GIF was added. Thank you!")
+    track(update.message.from_user.id, "add", update.message)
 
     return ConversationHandler.END
 
@@ -170,10 +183,13 @@ def inline_search(bot, update):
         opts['next_offset'] = str(next_page)
 
     update.inline_query.answer(results, **opts)
+    track(update.inline_query.from_user.id, "search", update.inline_query)
 
 def inline_result(bot, update):
     obj_id = update.chosen_inline_result.result_id
     logger.info("Gif with object_id={} choosen".format(obj_id))
+    track(update.chosen_inline_result.from_user.id, "select",
+        update.chosen_inline_result)
 
 def unknown_message(bot, update):
     if update.message:
@@ -185,6 +201,7 @@ def unknown_message(bot, update):
         else:
             text = "Unsupported message type. /help"
         update.message.reply_text(text)
+        track(update.message.from_user.id, "unknown", update.message)
 
 add_gif_conversation = ConversationHandler(
     entry_points=[MessageHandler(VideoFilter(), on_video,
